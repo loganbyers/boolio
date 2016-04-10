@@ -86,7 +86,7 @@ class BoolString (object):
 
     """An ordered collection of Bool."""
 
-    def __init__(self, length=None):
+    def __init__(self, length):
         """Construct a string of Bools."""
         self.binary = tuple(Bool() for i in range(length))
         self.length = length
