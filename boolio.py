@@ -27,7 +27,7 @@ THE SOFTWARE
 
 
 Author: Logan Byers (github.com/loganbyers)
-Date: 2016-04-10
+Date: 2016-04-11
 """
 
 import requests
@@ -55,10 +55,20 @@ class Bool (object):
         """Get a copy of a boolean."""
         return Bool(self.bid, self.val)
 
+    def pull(self):
+        """Sync boolean state from the remote version."""
+        b = _api_get(self.bid)
+        if b is None:
+            return False
+        self.val = b.val
+        return True
+
     def toggle(self):
         """Toggle boolean value."""
         if _api_put(self, not self.val):
             self.val = not self.val
+            return True
+        return False
 
     def destroy(self):
         """Destroy the online reference."""
@@ -66,20 +76,18 @@ class Bool (object):
 
     def __str__(self):
         """Get a string representation."""
-        if self.val:
-            return '1'
-        else:
-            return '0'
+        return str(int(self.val))
 
-    def __call__(self, val):
-        """Set a value."""
+    def __call__(self, val=None):
+        """Set a value and update the remote version."""
+        if val is None:
+            return _api_put(self.bid, self.val)
         if type(val) is not bool:
             return
         if _api_put(self.bid, val):
             self.val = val
             return True
-        else:
-            return False
+        return False
 
 
 class BoolString (object):
@@ -91,8 +99,23 @@ class BoolString (object):
         self.binary = tuple(Bool() for i in range(length))
         self.length = length
 
+    def copy(self):
+        """Get a copy of the object."""
+        bs = BoolString(0)
+        bs.binary = tuple(b.copy() for b in self.binary)
+        bs.length = len(self.binary)
+        return bs
+
+    def ids(self):
+        """Get the remote ids."""
+        return tuple(b.bid for b in self.binary)
+
+    def pull(self):
+        """Sync boolean states from the remote versions."""
+        return tuple(b.pull() for b in self.binary)
+
     def bits(self):
-        """Get a binary representation in MSB."""
+        """Get a binary representation."""
         s = ''
         for i in self.binary[::-1]:
             if i.val:
@@ -102,7 +125,7 @@ class BoolString (object):
         return s
 
     def __int__(self):
-        """Get unsigned bit value in MSB."""
+        """Get unsigned bit value."""
         r = 0
         for i, b in enumerate(self.binary):
             if b.val:
@@ -124,8 +147,10 @@ class BoolString (object):
             return
         return self.binary[key].val
 
-    def __call__(self, position, value):
-        """Set a bit value."""
+    def __call__(self, position=None, value=None):
+        """Set a bit value or sync state to remote version."""
+        if (position is None) and (value is None):
+            return tuple(b() for b in self.binary)
         if position >= len(self.binary):
             return
         return self.binary[position](value)
@@ -136,20 +161,25 @@ class BoolString (object):
 
     def destroy(self):
         """Destroy every boolean."""
-        for b in self.binary:
-            b.destroy()
+        return tuple(b.destroy() for b in self.binary)
 
 
-def save(file, obj):
-    """Write the state of the Bool or BoolString to a text file."""
+def save(file, obj, state=True):
+    """Write the a Bool or BoolString to a text file."""
     if type(obj) not in (Bool, BoolString):
         return
     with open(file, 'wb') as fout:
         if type(obj) is Bool:
-            fout.write(str(obj.bid) + '\t' + str(obj.val) + '\n')
+            if state:
+                fout.write(str(obj.bid) + '\t' + str(obj.val) + '\n')
+            else:
+                fout.write(str(obj.bid) + '\n')
         else:
             for b in obj:
-                fout.write(str(b.bid) + '\t' + str(b.val) + '\n')
+                if state:
+                    fout.write(str(b.bid) + '\t' + str(b.val) + '\n')
+                else:
+                    fout.write(str(b.bid) + '\n')
 
 
 def load(file):
@@ -180,12 +210,13 @@ def _api_post(val=False, verify=False):
         return Bool(r.json()['id'], r.json()['val'])
 
 
-def _api_put(bid, val):
+def _api_put(bid, val=None):
     """Set a boolean value."""
-    if type(bid) is Bool:
-        bid = bid.bid
     url = 'https://api.booleans.io/' + bid
-    r = requests.put(url, verify=False, data={'val': _bool_to_val(val)})
+    if val is None:
+        r = requests.put(url, verify=False)
+    else:
+        r = requests.put(url, verify=False, data={'val': _bool_to_val(val)})
     if r.status_code == 404:
         return False
     else:
@@ -194,10 +225,8 @@ def _api_put(bid, val):
 
 def _api_get(bid):
     """Get a boolean."""
-    if type(bid) is Bool:
-        bid = bid.bid
     url = 'https://api.booleans.io/' + bid
-    r = requests.get(url)
+    r = requests.get(url, verify=False)
     if r.status_code == 404:
         return None
     return Bool(r.json()['id'], r.json()['val'])
@@ -208,7 +237,7 @@ def _api_delete(bid):
     if type(bid) is Bool:
         bid = bid.bid
     url = 'https://api.booleans.io/' + bid
-    r = requests.delete(url)
+    r = requests.delete(url, verify=False)
     if r.status_code == 200:
         return True
     else:
